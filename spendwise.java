@@ -1,235 +1,424 @@
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Scanner;
 
 class Expense {
     private String description;
     private double amount;
-    private LocalDate date;
+    private final LocalDate date;
     private String category;
 
-    public Expense(String description, double amount, String category) {
+    Expense(String description, double amount, String category) {
         this.description = description;
         this.amount = amount;
         this.category = category;
-        this.date = LocalDate.now(); 
+        this.date = LocalDate.now();
+    }
+
+    public String getDescription() {
+        return description;
     }
 
     public double getAmount() {
         return amount;
     }
 
-    public String getCategory() {
-        return category;
-    }
-
     public LocalDate getDate() {
         return date;
     }
 
-    public void setDescription(String description) {
+    public String getCategory() {
+        return category;
+    }
+
+    public void update(String description, double amount, String category) {
         this.description = description;
-    }
-
-    public void setAmount(double amount) {
         this.amount = amount;
+        this.category = category;
     }
 
-    
+    @Override
     public String toString() {
-        return "Description: " + description + ", Amount: " + amount + ", Date: " + date + ", Category: " + category;
+        return "Description: " + description
+            + ", Amount: " + amount
+            + ", Date: " + date
+            + ", Category: " + category;
+    }
+}
+
+interface BudgetStrategy {
+    boolean matches(Expense expense, LocalDate referenceDate);
+}
+
+class DailyBudgetStrategy implements BudgetStrategy {
+    @Override
+    public boolean matches(Expense expense, LocalDate referenceDate) {
+        return expense.getDate().equals(referenceDate);
+    }
+}
+
+class WeeklyBudgetStrategy implements BudgetStrategy {
+    @Override
+    public boolean matches(Expense expense, LocalDate referenceDate) {
+        WeekFields weekFields = WeekFields.of(Locale.getDefault());
+        return expense.getDate().get(weekFields.weekBasedYear()) == referenceDate.get(weekFields.weekBasedYear())
+            && expense.getDate().get(weekFields.weekOfWeekBasedYear()) == referenceDate.get(weekFields.weekOfWeekBasedYear());
+    }
+}
+
+class MonthlyBudgetStrategy implements BudgetStrategy {
+    @Override
+    public boolean matches(Expense expense, LocalDate referenceDate) {
+        return expense.getDate().getYear() == referenceDate.getYear()
+            && expense.getDate().getMonth() == referenceDate.getMonth();
     }
 }
 
 class ExpenseTracker {
-    private List<Expense> expenses;
-    private double dailyBudget;
-    private double weeklyBudget;
-    private double monthlyBudget;
+    private final List<Expense> expenses = new ArrayList<>();
+    private final Map<String, Double> budgets = new LinkedHashMap<>();
+    private final Map<String, BudgetStrategy> budgetStrategies = new LinkedHashMap<>();
 
-    public ExpenseTracker() {
-        expenses = new ArrayList<>();
-        dailyBudget = 0;
-        weeklyBudget = 0;
-        monthlyBudget = 0;
+    ExpenseTracker() {
+        budgetStrategies.put("daily", new DailyBudgetStrategy());
+        budgetStrategies.put("weekly", new WeeklyBudgetStrategy());
+        budgetStrategies.put("monthly", new MonthlyBudgetStrategy());
+
+        for (String category : budgetStrategies.keySet()) {
+            budgets.put(category, 0.0);
+        }
     }
 
     public void logExpense(String description, double amount, String category) {
         expenses.add(new Expense(description, amount, category));
+    }
+
+    public List<Expense> getExpenses() {
+        return expenses;
+    }
+
+    public List<Expense> getExpensesByCategory(String category) {
+        List<Expense> filteredExpenses = new ArrayList<>();
+        for (Expense expense : expenses) {
+            if (expense.getCategory().equalsIgnoreCase(category)) {
+                filteredExpenses.add(expense);
+            }
+        }
+        return filteredExpenses;
+    }
+
+    public boolean deleteExpense(int index) {
+        if (index < 0 || index >= expenses.size()) {
+            return false;
+        }
+        expenses.remove(index);
+        return true;
+    }
+
+    public boolean editExpense(int index, String newDescription, double newAmount, String newCategory) {
+        if (index < 0 || index >= expenses.size()) {
+            return false;
+        }
+
+        expenses.get(index).update(newDescription, newAmount, newCategory);
+        return true;
+    }
+
+    public Map<String, Double> getTotalExpensesByCategory() {
+        Map<String, Double> totals = new LinkedHashMap<>();
+
+        for (String category : budgetStrategies.keySet()) {
+            totals.put(category, 0.0);
+        }
+
+        for (Expense expense : expenses) {
+            String category = expense.getCategory().toLowerCase(Locale.ROOT);
+            totals.put(category, totals.getOrDefault(category, 0.0) + expense.getAmount());
+        }
+
+        return totals;
+    }
+
+    public void setBudget(double dailyBudget, double weeklyBudget, double monthlyBudget) {
+        budgets.put("daily", dailyBudget);
+        budgets.put("weekly", weeklyBudget);
+        budgets.put("monthly", monthlyBudget);
+    }
+
+    public Map<String, Double> getRemainingBudget(LocalDate date) {
+        Map<String, Double> remainingBudget = new LinkedHashMap<>();
+
+        for (Map.Entry<String, BudgetStrategy> entry : budgetStrategies.entrySet()) {
+            String category = entry.getKey();
+            BudgetStrategy strategy = entry.getValue();
+            double spentAmount = 0.0;
+
+            for (Expense expense : expenses) {
+                if (expense.getCategory().equalsIgnoreCase(category) && strategy.matches(expense, date)) {
+                    spentAmount += expense.getAmount();
+                }
+            }
+
+            remainingBudget.put(category, budgets.get(category) - spentAmount);
+        }
+
+        return remainingBudget;
+    }
+
+    public boolean isValidCategory(String category) {
+        return budgetStrategies.containsKey(category.toLowerCase(Locale.ROOT));
+    }
+
+    public String getSupportedCategories() {
+        return String.join(", ", budgetStrategies.keySet());
+    }
+}
+
+interface MenuAction {
+    String getLabel();
+    void execute();
+}
+
+class ConsoleMenuAction implements MenuAction {
+    private final String label;
+    private final Runnable action;
+
+    ConsoleMenuAction(String label, Runnable action) {
+        this.label = label;
+        this.action = action;
+    }
+
+    @Override
+    public String getLabel() {
+        return label;
+    }
+
+    @Override
+    public void execute() {
+        action.run();
+    }
+}
+
+public class spendwise {
+    private final ExpenseTracker tracker = new ExpenseTracker();
+    private final Scanner scanner = new Scanner(System.in);
+    private final Map<Integer, MenuAction> actions = new LinkedHashMap<>();
+    private boolean running = true;
+
+    public static void main(String[] args) {
+        new spendwise().run();
+    }
+
+    spendwise() {
+        registerActions();
+    }
+
+    public void run() {
+        while (running) {
+            printMenu();
+            int choice = readInt("Enter your choice: ");
+            MenuAction action = actions.get(choice);
+
+            if (action == null) {
+                System.out.println("Invalid choice. Please enter a number between 1 and " + actions.size() + ".");
+                continue;
+            }
+
+            action.execute();
+        }
+    }
+
+    private void registerActions() {
+        actions.put(1, new ConsoleMenuAction("Log Expense", this::logExpense));
+        actions.put(2, new ConsoleMenuAction("View Expenses", this::viewExpenses));
+        actions.put(3, new ConsoleMenuAction("View Expenses by Category", this::viewExpensesByCategory));
+        actions.put(4, new ConsoleMenuAction("View Total Expense by Category", this::viewTotalExpenseByCategory));
+        actions.put(5, new ConsoleMenuAction("Delete Expense", this::deleteExpense));
+        actions.put(6, new ConsoleMenuAction("Edit Expense", this::editExpense));
+        actions.put(7, new ConsoleMenuAction("Set Budget", this::setBudget));
+        actions.put(8, new ConsoleMenuAction("View Remaining Budget", this::viewRemainingBudget));
+        actions.put(9, new ConsoleMenuAction("Exit", this::exitApplication));
+    }
+
+    private void printMenu() {
+        System.out.println("\nExpense Tracker Menu:");
+        for (Map.Entry<Integer, MenuAction> entry : actions.entrySet()) {
+            System.out.println(entry.getKey() + ". " + entry.getValue().getLabel());
+        }
+    }
+
+    private void logExpense() {
+        String description = readLine("Enter expense description: ");
+        double amount = readNonNegativeDouble("Enter expense amount: ");
+        String category = readCategory("Enter expense category (" + tracker.getSupportedCategories() + "): ");
+
+        tracker.logExpense(description, amount, category);
         System.out.println("Expense logged successfully.");
     }
 
-    public void viewExpenses() {
-        if (expenses.isEmpty()) {
+    private void viewExpenses() {
+        if (tracker.getExpenses().isEmpty()) {
             System.out.println("No expenses logged yet.");
-        } else {
-            System.out.println("All Expenses:");
-            for (Expense allExpense : expenses) {
-                System.out.println(allExpense);
-            }
+            return;
         }
+
+        printExpenses(tracker.getExpenses());
     }
 
-    public void viewExpensesByCategory(String category) {
-        boolean found = false;
-        for (Expense expense : expenses) {
-            if (expense.getCategory().equalsIgnoreCase(category)) {
-                System.out.println(expense);
-                found = true;
-            }
-        }
-        if (!found) {
+    private void viewExpensesByCategory() {
+        String category = readCategory("Enter category to search (" + tracker.getSupportedCategories() + "): ");
+        List<Expense> expenses = tracker.getExpensesByCategory(category);
+
+        if (expenses.isEmpty()) {
             System.out.println("No expenses found in the " + category + " category.");
+            return;
+        }
+
+        printExpenses(expenses);
+    }
+
+    private void viewTotalExpenseByCategory() {
+        if (tracker.getExpenses().isEmpty()) {
+            System.out.println("No expenses logged yet.");
+            return;
+        }
+
+        Map<String, Double> totals = tracker.getTotalExpensesByCategory();
+        System.out.println("Total Expenses by Category:");
+        for (Map.Entry<String, Double> entry : totals.entrySet()) {
+            System.out.println(entry.getKey() + ": " + entry.getValue());
         }
     }
 
-    public void deleteExpense(int index) {
-        if (index >= 0 && index < expenses.size()) {
-            expenses.remove(index);
+    private void deleteExpense() {
+        if (tracker.getExpenses().isEmpty()) {
+            System.out.println("No expenses logged yet.");
+            return;
+        }
+
+        printExpenses(tracker.getExpenses());
+        int index = readInt("Enter the index of the expense to delete: ") - 1;
+
+        if (tracker.deleteExpense(index)) {
             System.out.println("Expense deleted successfully.");
         } else {
             System.out.println("Invalid index. Cannot delete expense.");
         }
     }
 
-    public void editExpense(int index, String newDescription, double newAmount, String newCategory) {
-        if (index >= 0 && index < expenses.size()) {
-            Expense expense = expenses.get(index);
-            expense.setDescription(newDescription);
-            expense.setAmount(newAmount);
+    private void editExpense() {
+        if (tracker.getExpenses().isEmpty()) {
+            System.out.println("No expenses logged yet.");
+            return;
+        }
+
+        printExpenses(tracker.getExpenses());
+        int index = readInt("Enter the index of the expense to edit: ") - 1;
+        String newDescription = readLine("Enter new description: ");
+        double newAmount = readNonNegativeDouble("Enter new amount: ");
+        String newCategory = readCategory("Enter new category (" + tracker.getSupportedCategories() + "): ");
+
+        if (tracker.editExpense(index, newDescription, newAmount, newCategory)) {
             System.out.println("Expense edited successfully.");
         } else {
             System.out.println("Invalid index. Cannot edit expense.");
         }
     }
 
+    private void setBudget() {
+        double dailyBudget = readNonNegativeDouble("Set daily budget: ");
+        double weeklyBudget = readNonNegativeDouble("Set weekly budget: ");
+        double monthlyBudget = readNonNegativeDouble("Set monthly budget: ");
 
-    public void viewTotalExpenseByCategory() {
-        Map<String, Double> categoryTotals = new HashMap<>();
-        for (Expense expense : expenses) {
-            String category = expense.getCategory();
-            categoryTotals.put(category, categoryTotals.getOrDefault(category, 0.0) + expense.getAmount());
-        }
-        System.out.println("Total Expenses by Category:");
-        for (Map.Entry<String, Double> entry : categoryTotals.entrySet()) {
-            System.out.println(entry.getKey() + ": " + entry.getValue());
-        }
-    }
-
-    public void setBudget(double daily, double weekly, double monthly) {
-        this.dailyBudget = daily;
-        this.weeklyBudget = weekly;
-        this.monthlyBudget = monthly;
+        tracker.setBudget(dailyBudget, weeklyBudget, monthlyBudget);
         System.out.println("Budgets set successfully.");
     }
 
-    public void viewRemainingBudget(LocalDate date) {
-        double totalDaily = 0, totalWeekly = 0, totalMonthly = 0;
+    private void viewRemainingBudget() {
+        LocalDate date = readDate("Enter the date to view remaining budget (yyyy-mm-dd): ");
+        Map<String, Double> remainingBudget = tracker.getRemainingBudget(date);
 
-        for (Expense expense : expenses) {
-            if (expense.getDate().isEqual(date) && expense.getCategory().equalsIgnoreCase("daily")) {
-                totalDaily += expense.getAmount();
-            }
-            if (expense.getCategory().equalsIgnoreCase("weekly")) {
-                totalWeekly += expense.getAmount();
-            }
-            if (expense.getCategory().equalsIgnoreCase("monthly")) {
-                totalMonthly += expense.getAmount();
+        System.out.println("Remaining Daily Budget: " + remainingBudget.get("daily"));
+        System.out.println("Remaining Weekly Budget: " + remainingBudget.get("weekly"));
+        System.out.println("Remaining Monthly Budget: " + remainingBudget.get("monthly"));
+    }
+
+    private void exitApplication() {
+        System.out.println("Exiting...");
+        running = false;
+    }
+
+    private void printExpenses(List<Expense> expenses) {
+        System.out.println("Expenses:");
+        for (int index = 0; index < expenses.size(); index++) {
+            System.out.println((index + 1) + ". " + expenses.get(index));
+        }
+    }
+
+    private String readLine(String prompt) {
+        System.out.print(prompt);
+        return scanner.nextLine().trim();
+    }
+
+    private int readInt(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String value = scanner.nextLine().trim();
+
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException exception) {
+                System.out.println("Please enter a valid whole number.");
             }
         }
-
-        System.out.println("Remaining Daily Budget: " + (dailyBudget - totalDaily));
-        System.out.println("Remaining Weekly Budget: " + (weeklyBudget - totalWeekly));
-        System.out.println("Remaining Monthly Budget: " + (monthlyBudget - totalMonthly));
     }
-}
 
-public class spendwise {
-    public static void main(String[] args) {
-        ExpenseTracker tracker = new ExpenseTracker();
-        Scanner scanner = new Scanner(System.in);
-
+    private double readNonNegativeDouble(String prompt) {
         while (true) {
-            System.out.println("\nExpense Tracker Menu:");
-            System.out.println("1. Log Expense");
-            System.out.println("2. View Expenses");
-            System.out.println("3. View Expenses by Category");
-            System.out.println("4. View Total Expense by Category");
-            System.out.println("5. Delete Expense");
-            System.out.println("6. Edit Expense");
-            System.out.println("7. Set Budget");
-            System.out.println("8. View Remaining Budget");
-            System.out.println("9. Exit");
-            System.out.print("Enter your choice: ");
+            System.out.print(prompt);
+            String value = scanner.nextLine().trim();
 
-            int choice = scanner.nextInt();
-            scanner.nextLine(); // Consume newline
+            try {
+                double amount = Double.parseDouble(value);
+                if (amount < 0) {
+                    System.out.println("Amount cannot be negative.");
+                    continue;
+                }
+                return amount;
+            } catch (NumberFormatException exception) {
+                System.out.println("Please enter a valid number.");
+            }
+        }
+    }
 
-            switch (choice) {
-                case 1:
-                System.out.println("Log expense: ");
+    private String readCategory(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String category = scanner.nextLine().trim().toLowerCase(Locale.ROOT);
 
-                    System.out.print("Enter expense description: ");
-                    String description = scanner.nextLine();
-                    System.out.print("Enter expense amount: ");
-                    double amount = scanner.nextDouble();
-                    System.out.print("Enter expense category (daily, weekly, monthly): ");
-                    String category = scanner.next();
-                    tracker.logExpense(description, amount, category);
-                    break;
-                case 2:
-                    tracker.viewExpenses();
-                    break;
-                case 3:
-                    System.out.print("Enter category to search (daily, weekly, monthly): ");
-                    String searchCategory = scanner.next();
-                    tracker.viewExpensesByCategory(searchCategory);
-                    break;
-                
-                case 4:
-                    tracker.viewTotalExpenseByCategory();
-                    break;
-                case 5:
-                    tracker.viewExpenses();
-                    System.out.print("Enter the index of the expense to delete: ");
-                    int deleteIndex = scanner.nextInt();
-                    tracker.deleteExpense(deleteIndex - 1);
-                    break;
-                case 6:
-                    tracker.viewExpenses();
-                    System.out.print("Enter the index of the expense to edit: ");
-                    int editIndex = scanner.nextInt();
-                    scanner.nextLine(); // Consume newline
-                    System.out.print("Enter new description: ");
-                    String newDescription = scanner.nextLine();
-                    System.out.print("Enter new amount: ");
-                    double newAmount = scanner.nextDouble();
-                    System.out.print("Enter new category (daily, weekly, monthly): ");
-                    String newCategory = scanner.next();
-                    tracker.editExpense(editIndex - 1, newDescription, newAmount, newCategory);
-                    break;
-                case 7:
-                    System.out.print("Set daily budget:");
-                    double dailyBudget = scanner.nextDouble();
-                    System.out.print("Set weekly budget: ");
-                    double weeklyBudget = scanner.nextDouble();
-                    System.out.print("Set monthly budget: ");
-                    double monthlyBudget = scanner.nextDouble();
-                    tracker.setBudget(dailyBudget, weeklyBudget, monthlyBudget);
-                    break;
-                case 8:
-                    System.out.print("Enter the date to view remaining budget (yyyy-mm-dd): ");
-                    LocalDate budgetDate = LocalDate.parse(scanner.next());
-                    tracker.viewRemainingBudget(budgetDate);
-                    break;
-                case 9:
-                    System.out.println("Exiting...");
-                    System.exit(0);
-                default:
-                    System.out.println("Invalid choice. Please enter a number between 1 and 10.");
+            if (tracker.isValidCategory(category)) {
+                return category;
+            }
+
+            System.out.println("Invalid category. Use one of: " + tracker.getSupportedCategories());
+        }
+    }
+
+    private LocalDate readDate(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String dateInput = scanner.nextLine().trim();
+
+            try {
+                return LocalDate.parse(dateInput);
+            } catch (DateTimeParseException exception) {
+                System.out.println("Invalid date format. Please use yyyy-mm-dd.");
             }
         }
     }
